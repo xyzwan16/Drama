@@ -1,0 +1,95 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Information about a registered user of Dramaku",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The user UID" },
+        "displayName": { "type": "string", "description": "Display name of the user" },
+        "email": { "type": "string", "description": "Email address" },
+        "photoUrl": { "type": "string", "description": "Profile picture URL" },
+        "vipStatus": { "type": "boolean", "description": "Whether user has VIP status" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp via serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp via serverTimestamp()" }
+      },
+      "required": ["id", "displayName", "email", "createdAt", "updatedAt"]
+    },
+    "UserBookmark": {
+      "title": "UserBookmark",
+      "description": "Drama saved into user's private watchlist",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Bookmark ID (matches dramaId)" },
+        "userId": { "type": "string", "description": "Owner user UID" },
+        "dramaId": { "type": "string", "description": "The drama ID" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when drama was bookmarked via serverTimestamp()" }
+      },
+      "required": ["id", "userId", "dramaId", "createdAt"]
+    },
+    "UserSubscription": {
+      "title": "UserSubscription",
+      "description": "Drama followed by user to receive notifications when new episodes release",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Subscription ID (matches dramaId)" },
+        "userId": { "type": "string", "description": "Owner user UID" },
+        "dramaId": { "type": "string", "description": "The drama ID" },
+        "subscribedAt": { "type": "string", "format": "date-time", "description": "Timestamp of following via serverTimestamp()" }
+      },
+      "required": ["id", "userId", "dramaId", "subscribedAt"]
+    },
+    "UserWatchProgress": {
+      "title": "UserWatchProgress",
+      "description": "User's watch history for a specific drama",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "History record ID (matches dramaId)" },
+        "userId": { "type": "string", "description": "Owner user UID" },
+        "dramaId": { "type": "string", "description": "The drama ID" },
+        "episodeNumber": { "type": "integer", "description": "Last watched episode number" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Timestamp of progress update via serverTimestamp()" }
+      },
+      "required": ["id", "userId", "dramaId", "episodeNumber", "updatedAt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Viewer comments and reviews on specific drama episodes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique comment identifier" },
+        "dramaId": { "type": "string", "description": "The drama ID" },
+        "episodeNumber": { "type": "integer", "description": "The episode number" },
+        "userId": { "type": "string", "description": "Author user UID" },
+        "userName": { "type": "string", "description": "Author display name" },
+        "avatarInitials": { "type": "string", "description": "Short avatar letters" },
+        "text": { "type": "string", "description": "Comment content text" },
+        "likesCount": { "type": "integer", "description": "Number of likes" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp via serverTimestamp()" }
+      },
+      "required": ["id", "dramaId", "episodeNumber", "userId", "userName", "text", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles stored by user UID"
+    },
+    "/users/{userId}/bookmarks/{dramaId}": {
+      "schema": { "$ref": "#/entities/UserBookmark" },
+      "description": "Private collection of bookmarked dramas for the user"
+    },
+    "/users/{userId}/subscriptions/{dramaId}": {
+      "schema": { "$ref": "#/entities/UserSubscription" },
+      "description": "Private subscriptions for episode release notifications"
+    },
+    "/users/{userId}/history/{dramaId}": {
+      "schema": { "$ref": "#/entities/UserWatchProgress" },
+      "description": "Private watch history records per drama"
+    },
+    "/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Public community comments on drama episodes"
+    }
+  }
+}

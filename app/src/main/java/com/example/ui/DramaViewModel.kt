@@ -5,6 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.DramaRepository
 import com.example.model.*
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.auth
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -34,6 +38,20 @@ data class PlayerUiState(
 class DramaViewModel(application: Application) : AndroidViewModel(application) {
 
     val repository = DramaRepository(application.applicationContext)
+
+    private val auth: FirebaseAuth = Firebase.auth
+    private val _currentUser = MutableStateFlow<FirebaseUser?>(auth.currentUser)
+    val currentUser: StateFlow<FirebaseUser?> = _currentUser.asStateFlow()
+
+    private val authListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+        val user = firebaseAuth.currentUser
+        _currentUser.value = user
+        if (user != null) {
+            repository.onUserSignedIn(user)
+        } else {
+            repository.onUserSignedOut()
+        }
+    }
 
     val dramas: StateFlow<List<Drama>> = repository.dramas
     val subscribedDramaIds: StateFlow<Set<String>> = repository.subscribedDramaIds
@@ -129,6 +147,7 @@ class DramaViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     init {
+        auth.addAuthStateListener(authListener)
         // Initialize player with top trending drama
         viewModelScope.launch {
             dramas.first { it.isNotEmpty() }.let { list ->
@@ -310,4 +329,9 @@ class DramaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun simulateNewEpisode(dramaId: String) =
         repository.triggerSimulateNewEpisodeRelease(dramaId)
+
+    override fun onCleared() {
+        super.onCleared()
+        auth.removeAuthStateListener(authListener)
+    }
 }

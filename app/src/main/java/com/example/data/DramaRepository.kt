@@ -1,15 +1,32 @@
 package com.example.data
 
 import android.content.Context
+import android.util.Log
 import com.example.R
 import com.example.model.*
 import com.example.util.NotificationHelper
+import com.example.util.OperationType
+import com.example.util.handleFirestoreError
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-class DramaRepository(private val context: Context) {
+class DramaRepository(
+    private val context: Context,
+    private val db: FirebaseFirestore = FirebaseFirestore.getInstance(
+        context.applicationContext.getString(R.string.firestore_database_id)
+    ),
+    private val auth: FirebaseAuth = Firebase.auth
+) {
 
     private val _dramas = MutableStateFlow<List<Drama>>(emptyList())
     val dramas: StateFlow<List<Drama>> = _dramas.asStateFlow()
@@ -35,8 +52,147 @@ class DramaRepository(private val context: Context) {
     private val _subtitleConfig = MutableStateFlow(SubtitleConfig())
     val subtitleConfig: StateFlow<SubtitleConfig> = _subtitleConfig.asStateFlow()
 
+    private var bookmarksListener: ListenerRegistration? = null
+    private var subscriptionsListener: ListenerRegistration? = null
+    private var historyListener: ListenerRegistration? = null
+    private var commentsListener: ListenerRegistration? = null
+
     init {
         initializeData()
+        attachGlobalCommentsListener()
+        // If a user is already signed in, attach listeners
+        auth.currentUser?.let { user ->
+            attachUserListeners(user.uid)
+        }
+    }
+
+    fun requireUserId(): String {
+        return auth.currentUser?.uid
+            ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
+    }
+
+    fun onUserSignedIn(user: FirebaseUser) {
+        attachUserListeners(user.uid)
+        saveUserProfile(user)
+    }
+
+    fun onUserSignedOut() {
+        detachUserListeners()
+    }
+
+    fun attachUserListeners(userId: String) {
+        detachUserListeners()
+
+        val bookmarksPath = "users/$userId/bookmarks"
+        bookmarksListener = db.collection("users").document(userId).collection("bookmarks")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    handleFirestoreError(error, OperationType.LIST, bookmarksPath)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val ids = snapshot.documents.map { it.id }.toSet()
+                    if (ids.isNotEmpty()) {
+                        _bookmarkedDramaIds.value = ids
+                    }
+                }
+            }
+
+        val subscriptionsPath = "users/$userId/subscriptions"
+        subscriptionsListener = db.collection("users").document(userId).collection("subscriptions")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    handleFirestoreError(error, OperationType.LIST, subscriptionsPath)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val ids = snapshot.documents.map { it.id }.toSet()
+                    if (ids.isNotEmpty()) {
+                        _subscribedDramaIds.value = ids
+                    }
+                }
+            }
+
+        val historyPath = "users/$userId/history"
+        historyListener = db.collection("users").document(userId).collection("history")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    handleFirestoreError(error, OperationType.LIST, historyPath)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val historyMap = mutableMapOf<String, Int>()
+                    for (doc in snapshot.documents) {
+                        val dramaId = doc.getString("dramaId") ?: doc.id
+                        val lastEp = (doc.get("lastEpisode") as? Number)?.toInt() ?: 1
+                        historyMap[dramaId] = lastEp
+                    }
+                    if (historyMap.isNotEmpty()) {
+                        _watchHistory.value = historyMap
+                    }
+                }
+            }
+    }
+
+    fun detachUserListeners() {
+        bookmarksListener?.remove()
+        bookmarksListener = null
+        subscriptionsListener?.remove()
+        subscriptionsListener = null
+        historyListener?.remove()
+        historyListener = null
+    }
+
+    private fun attachGlobalCommentsListener() {
+        val path = "comments"
+        commentsListener = db.collection(path)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null && !snapshot.isEmpty) {
+                    val newCommentsMap = _comments.value.toMutableMap()
+                    for (doc in snapshot.documents) {
+                        val dramaId = doc.getString("dramaId") ?: continue
+                        val epNumber = (doc.get("episodeNumber") as? Number)?.toInt() ?: 1
+                        val key = "${dramaId}_$epNumber"
+                        val comment = DramaComment(
+                            id = doc.id,
+                            dramaId = dramaId,
+                            episodeNumber = epNumber,
+                            userName = doc.getString("userName") ?: "Penonton Dramaku",
+                            avatarInitials = (doc.getString("userName") ?: "PD").take(2).uppercase(),
+                            text = doc.getString("text") ?: "",
+                            timeAgo = "Baru saja",
+                            likesCount = (doc.get("likesCount") as? Number)?.toInt() ?: 1,
+                            isLiked = false
+                        )
+                        val existing = newCommentsMap[key] ?: emptyList()
+                        if (existing.none { it.id == comment.id }) {
+                            newCommentsMap[key] = listOf(comment) + existing
+                        }
+                    }
+                    _comments.value = newCommentsMap
+                }
+            }
+    }
+
+    fun saveUserProfile(user: FirebaseUser) {
+        val path = "users/${user.uid}"
+        val profileData = mapOf(
+            "id" to user.uid,
+            "displayName" to (user.displayName ?: "Penggemar Dramaku"),
+            "email" to (user.email ?: ""),
+            "photoUrl" to (user.photoUrl?.toString() ?: ""),
+            "createdAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        db.collection("users").document(user.uid)
+            .set(profileData, SetOptions.merge())
+            .addOnFailureListener { error ->
+                handleFirestoreError(error, OperationType.WRITE, path)
+            }
     }
 
     private fun initializeData() {
@@ -100,7 +256,7 @@ class DramaRepository(private val context: Context) {
                 title = "Misteri Apartemen 404",
                 titleAlt = "Room 404: Whispers in the Dark",
                 synopsis = "Sebuah film pendek misteri menegangkan tentang seorang mahasiswi seni yang menyewa apartemen murah di pusat kota Jakarta. Tiap jam 03.15 pagi, bel pintu selalu berbunyi dan pesan-pesan aneh mulai bermunculan di cermin kamar mandi.",
-                posterRes = R.drawable.poster_ceo_dingin_1792425093218, // reusable poster
+                posterRes = R.drawable.poster_ceo_dingin_1792425093218,
                 genre = "Film Pendek",
                 tags = listOf("Film Pendek", "Thriller", "Misteri", "Sub Indo"),
                 isSeries = false,
@@ -169,7 +325,6 @@ class DramaRepository(private val context: Context) {
                 country = "Indonesia",
                 countryFlag = "🇮🇩"
             ),
-            // Drama Pendek China 🇨🇳 (C-Drama)
             Drama(
                 id = "c_dewa_perang",
                 title = "Kebangkitan Sang Dewa Perang",
@@ -210,7 +365,6 @@ class DramaRepository(private val context: Context) {
                 country = "China",
                 countryFlag = "🇨🇳"
             ),
-            // Drama Pendek Korea Selatan 🇰🇷 (K-Drama)
             Drama(
                 id = "k_intern_reinkarnasi",
                 title = "Rahasia Reinkarnasi Anak Magang",
@@ -251,7 +405,6 @@ class DramaRepository(private val context: Context) {
                 country = "Korea",
                 countryFlag = "🇰🇷"
             ),
-            // Drama Pendek Thailand 🇹🇭 (Thai Lakorn)
             Drama(
                 id = "th_pewaris_mutiara",
                 title = "Pembalasan Sang Pewaris Mutiara",
@@ -272,7 +425,6 @@ class DramaRepository(private val context: Context) {
                 country = "Thailand",
                 countryFlag = "🇹🇭"
             ),
-            // Drama Pendek Jepang 🇯🇵 (J-Drama)
             Drama(
                 id = "jp_midnight_lens",
                 title = "Kamera Misterius di Shibuya",
@@ -293,7 +445,6 @@ class DramaRepository(private val context: Context) {
                 country = "Jepang",
                 countryFlag = "🇯🇵"
             ),
-            // Drama Pendek Amerika Serikat 🇺🇸 (Western Short Drama)
             Drama(
                 id = "us_billionaire_alpha",
                 title = "Pesona Sang Alpha Triliuner",
@@ -592,15 +743,14 @@ class DramaRepository(private val context: Context) {
         }
     }
 
-    // Interactive Actions
+    // Interactive Actions with Firestore synchronization
     fun toggleSubscription(dramaId: String) {
         val current = _subscribedDramaIds.value
         val drama = _dramas.value.find { it.id == dramaId } ?: return
-        if (current.contains(dramaId)) {
-            _subscribedDramaIds.value = current - dramaId
-        } else {
+        val isNowSubscribed = !current.contains(dramaId)
+
+        if (isNowSubscribed) {
             _subscribedDramaIds.value = current + dramaId
-            // Trigger confirmation feedback notification
             NotificationHelper.sendEpisodeNotification(
                 context = context,
                 dramaId = dramaId,
@@ -609,15 +759,61 @@ class DramaRepository(private val context: Context) {
                 episodeTitle = "Lonceng Diaktifkan",
                 customMessage = "Anda sekarang mengikuti '${drama.title}'. Pemberitahuan episode baru akan dikirim secara otomatis!"
             )
+        } else {
+            _subscribedDramaIds.value = current - dramaId
+        }
+
+        // Sync with Firestore if user is authenticated
+        val uid = auth.currentUser?.uid
+        if (uid != null) {
+            val docRef = db.collection("users").document(uid).collection("subscriptions").document(dramaId)
+            if (isNowSubscribed) {
+                val data = mapOf(
+                    "dramaId" to dramaId,
+                    "title" to drama.title,
+                    "releaseSchedule" to drama.releaseSchedule,
+                    "subscribedAt" to FieldValue.serverTimestamp()
+                )
+                docRef.set(data).addOnFailureListener { error ->
+                    handleFirestoreError(error, OperationType.WRITE, docRef.path)
+                }
+            } else {
+                docRef.delete().addOnFailureListener { error ->
+                    handleFirestoreError(error, OperationType.DELETE, docRef.path)
+                }
+            }
         }
     }
 
     fun toggleBookmark(dramaId: String) {
         val current = _bookmarkedDramaIds.value
-        _bookmarkedDramaIds.value = if (current.contains(dramaId)) {
-            current - dramaId
-        } else {
+        val drama = _dramas.value.find { it.id == dramaId }
+        val isNowBookmarked = !current.contains(dramaId)
+
+        _bookmarkedDramaIds.value = if (isNowBookmarked) {
             current + dramaId
+        } else {
+            current - dramaId
+        }
+
+        // Sync with Firestore if user is authenticated
+        val uid = auth.currentUser?.uid
+        if (uid != null) {
+            val docRef = db.collection("users").document(uid).collection("bookmarks").document(dramaId)
+            if (isNowBookmarked) {
+                val data = mapOf(
+                    "dramaId" to dramaId,
+                    "title" to (drama?.title ?: dramaId),
+                    "addedAt" to FieldValue.serverTimestamp()
+                )
+                docRef.set(data).addOnFailureListener { error ->
+                    handleFirestoreError(error, OperationType.WRITE, docRef.path)
+                }
+            } else {
+                docRef.delete().addOnFailureListener { error ->
+                    handleFirestoreError(error, OperationType.DELETE, docRef.path)
+                }
+            }
         }
     }
 
@@ -634,6 +830,19 @@ class DramaRepository(private val context: Context) {
         val map = _watchHistory.value.toMutableMap()
         map[dramaId] = episodeNumber
         _watchHistory.value = map
+
+        val uid = auth.currentUser?.uid
+        if (uid != null) {
+            val docRef = db.collection("users").document(uid).collection("history").document(dramaId)
+            val data = mapOf(
+                "dramaId" to dramaId,
+                "lastEpisode" to episodeNumber,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(data, SetOptions.merge()).addOnFailureListener { error ->
+                handleFirestoreError(error, OperationType.WRITE, docRef.path)
+            }
+        }
     }
 
     fun markNotificationAsRead(id: String) {
@@ -648,11 +857,17 @@ class DramaRepository(private val context: Context) {
         }
     }
 
-    fun addComment(dramaId: String, episodeNumber: Int, text: String, userName: String = "Penonton Setia") {
+    fun addComment(
+        dramaId: String,
+        episodeNumber: Int,
+        text: String,
+        userName: String = auth.currentUser?.displayName ?: "Penonton Setia"
+    ) {
         val key = "${dramaId}_$episodeNumber"
         val existing = _comments.value[key] ?: emptyList()
+        val commentId = "c_${System.currentTimeMillis()}"
         val newComment = DramaComment(
-            id = "c_${System.currentTimeMillis()}",
+            id = commentId,
             dramaId = dramaId,
             episodeNumber = episodeNumber,
             userName = userName,
@@ -665,6 +880,23 @@ class DramaRepository(private val context: Context) {
         val updatedMap = _comments.value.toMutableMap()
         updatedMap[key] = listOf(newComment) + existing
         _comments.value = updatedMap
+
+        val uid = auth.currentUser?.uid
+        if (uid != null) {
+            val commentsRef = db.collection("comments").document(commentId)
+            val payload = mapOf(
+                "userId" to uid,
+                "userName" to userName,
+                "dramaId" to dramaId,
+                "episodeNumber" to episodeNumber,
+                "text" to text,
+                "likesCount" to 1,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            commentsRef.set(payload).addOnFailureListener { error ->
+                handleFirestoreError(error, OperationType.CREATE, commentsRef.path)
+            }
+        }
     }
 
     fun updateSubtitleConfig(language: SubtitleLanguage? = null, fontSizeSp: Int? = null, opacity: Float? = null) {
@@ -677,16 +909,11 @@ class DramaRepository(private val context: Context) {
         }
     }
 
-    /**
-     * Simulates a brand new episode dropping right now!
-     * Updates drama state, adds in-app notification, and fires an actual Android notification.
-     */
     fun triggerSimulateNewEpisodeRelease(dramaId: String) {
         val drama = _dramas.value.find { it.id == dramaId } ?: return
         val nextEpNumber = drama.releasedEpisodes + 1
         val episodeTitle = "Episode $nextEpNumber: Pertaruhan Terakhir"
 
-        // Update drama state
         _dramas.update { list ->
             list.map { d ->
                 if (d.id == dramaId) {
@@ -698,7 +925,6 @@ class DramaRepository(private val context: Context) {
             }
         }
 
-        // Add to notification inbox
         val newNotif = DramaNotification(
             id = "notif_${System.currentTimeMillis()}",
             dramaId = dramaId,
@@ -713,7 +939,6 @@ class DramaRepository(private val context: Context) {
         )
         _notifications.update { listOf(newNotif) + it }
 
-        // Send real Android system notification
         NotificationHelper.sendEpisodeNotification(
             context = context,
             dramaId = dramaId,

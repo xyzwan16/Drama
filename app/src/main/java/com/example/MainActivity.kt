@@ -17,10 +17,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.DramaViewModel
 import com.example.ui.MainNavigationTab
@@ -28,6 +30,7 @@ import com.example.ui.components.DramakuTopBar
 import com.example.ui.components.WebsiteTopNavBar
 import com.example.ui.screens.*
 import com.example.ui.theme.*
+import com.example.util.GoogleAuthHelper
 import com.example.util.NotificationHelper
 
 class MainActivity : ComponentActivity() {
@@ -73,6 +76,43 @@ fun DramakuApp(viewModel: DramaViewModel) {
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val selectedDramaForDetail by viewModel.selectedDramaForDetail.collectAsStateWithLifecycle()
     val unreadCount by viewModel.unreadNotificationsCount.collectAsStateWithLifecycle()
+
+    val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val credentialManager = remember { CredentialManager.create(context) }
+    var isSigningIn by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        GoogleAuthHelper.attemptAutoSignIn(
+            context = context,
+            credentialManager = credentialManager,
+            onAuthSuccess = {},
+            onUnauthenticated = {},
+            scope = coroutineScope
+        )
+    }
+
+    val handleGoogleSignIn: () -> Unit = {
+        isSigningIn = true
+        GoogleAuthHelper.onGoogleSignInClicked(
+            context = context,
+            credentialManager = credentialManager,
+            onAuthSuccess = { isSigningIn = false },
+            onAuthError = { isSigningIn = false },
+            scope = coroutineScope,
+            onAuthCancelled = { isSigningIn = false }
+        )
+    }
+
+    val handleSignOut: () -> Unit = {
+        GoogleAuthHelper.signOut(
+            context = context,
+            credentialManager = credentialManager,
+            onSignOutComplete = {},
+            scope = coroutineScope
+        )
+    }
 
     val dramas by viewModel.filteredDramas.collectAsStateWithLifecycle()
     val allDramas by viewModel.dramas.collectAsStateWithLifecycle()
@@ -125,6 +165,7 @@ fun DramakuApp(viewModel: DramaViewModel) {
                     selectedCountry = selectedCountry,
                     isWebsiteMode = isWebsiteMode,
                     currentUrl = currentWebUrl,
+                    currentUser = currentUser,
                     onTabSelect = { tab ->
                         viewModel.closeDramaDetail()
                         viewModel.selectTab(tab)
@@ -389,6 +430,10 @@ fun DramakuApp(viewModel: DramaViewModel) {
                             subscribedIds = subscribedIds,
                             watchHistory = watchHistory,
                             subtitleConfig = subtitleConfig,
+                            currentUser = currentUser,
+                            isSigningIn = isSigningIn,
+                            onGoogleSignIn = handleGoogleSignIn,
+                            onSignOut = handleSignOut,
                             onDramaClick = viewModel::openDramaDetail,
                             onPlayClick = viewModel::playDramaEpisode,
                             onToggleBookmark = viewModel::toggleBookmark,

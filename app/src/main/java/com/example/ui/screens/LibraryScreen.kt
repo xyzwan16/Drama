@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.google.firebase.auth.FirebaseUser
 import com.example.model.Drama
 import com.example.model.Episode
 import com.example.model.SubtitleConfig
@@ -36,6 +37,10 @@ fun LibraryScreen(
     subscribedIds: Set<String>,
     watchHistory: Map<String, Int>,
     subtitleConfig: SubtitleConfig,
+    currentUser: FirebaseUser? = null,
+    isSigningIn: Boolean = false,
+    onGoogleSignIn: () -> Unit = {},
+    onSignOut: () -> Unit = {},
     onDramaClick: (Drama) -> Unit,
     onPlayClick: (Drama, Episode) -> Unit,
     onToggleBookmark: (String) -> Unit,
@@ -60,62 +65,210 @@ fun LibraryScreen(
             .background(CinemaBlack),
         contentPadding = PaddingValues(bottom = 90.dp)
     ) {
-        // User Profile Header
+        // User Profile & Google Sign-In Header
         item {
-            Surface(
-                color = CinemaDarkSurface,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            if (currentUser != null) {
+                Surface(
+                    color = CinemaDarkSurface,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Box(
+                    Row(
                         modifier = Modifier
-                            .size(56.dp)
-                            .clip(CircleShape)
-                            .background(CrimsonDark),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "DK",
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Black
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "Penggemar Drama ID",
-                                color = TextPrimary,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
+                        val photoUrl = currentUser.photoUrl?.toString()
+                        if (!photoUrl.isNullOrEmpty()) {
+                            AsyncImage(
+                                model = photoUrl,
+                                contentDescription = "Foto Profil",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                color = GoldAccent,
-                                shape = RoundedCornerShape(4.dp)
+                        } else {
+                            val initials = (currentUser.displayName ?: "DK")
+                                .split(" ")
+                                .mapNotNull { it.firstOrNull()?.toString() }
+                                .take(2)
+                                .joinToString("")
+                                .uppercase()
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(CrimsonDark),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "VIP MEMBER",
-                                    color = CinemaBlack,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Black,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                    text = if (initials.isNotEmpty()) initials else "DK",
+                                    color = Color.White,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Black
                                 )
                             }
                         }
-                        Text(
-                            text = "${subscribedIds.size} Series Diikuti • ${bookmarkedIds.size} Drama Disimpan",
-                            color = TextSecondary,
-                            fontSize = 11.sp
-                        )
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = currentUser.displayName ?: "Penonton Dramaku",
+                                    color = TextPrimary,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    color = GoldAccent,
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text(
+                                        text = "VIP MEMBER",
+                                        color = CinemaBlack,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Black,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            if (!currentUser.email.isNullOrBlank()) {
+                                Text(
+                                    text = currentUser.email ?: "",
+                                    color = TextMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(top = 2.dp)
+                            ) {
+                                Text(
+                                    text = "☁️ Firebase Sync Aktif",
+                                    color = SuccessGreen,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = " • ${subscribedIds.size} Diikuti • ${bookmarkedIds.size} Tersimpan",
+                                    color = TextSecondary,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        OutlinedButton(
+                            onClick = onSignOut,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BorderSubtle),
+                            modifier = Modifier
+                                .height(32.dp)
+                                .testTag("sign_out_button")
+                        ) {
+                            Text("Keluar", fontSize = 11.sp, color = TextSecondary)
+                        }
+                    }
+                }
+            } else {
+                // Unauthenticated State with Interactive Google Sign-In Card
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = CinemaCardSurface),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .testTag("google_auth_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(CrimsonDark),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudSync,
+                                    contentDescription = null,
+                                    tint = GoldAccent,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Sinkronisasi Koleksi Cloud",
+                                    color = TextPrimary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Masuk untuk menyimpan riwayat dan series favorit Anda di Firebase Firestore.",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Button(
+                            onClick = onGoogleSignIn,
+                            enabled = !isSigningIn,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("google_sign_in_button")
+                        ) {
+                            if (isSigningIn) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = CinemaBlack,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Menghubungkan...",
+                                    color = CinemaBlack,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.AccountCircle,
+                                    contentDescription = "Google Icon",
+                                    tint = CrimsonPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Sign in with Google",
+                                    color = Color(0xFF1F1F1F),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
                 }
             }

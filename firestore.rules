@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidTimestamp(val) {
+      return val is timestamp && val <= request.time;
+    }
+
+    // User Profile
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isUser(userId)
+                    && request.resource.data.id == userId
+                    && request.resource.data.displayName is string
+                    && request.resource.data.email is string
+                    && isValidTimestamp(request.resource.data.createdAt)
+                    && isValidTimestamp(request.resource.data.updatedAt);
+      allow update: if isUser(userId)
+                    && request.resource.data.id == userId
+                    && request.resource.data.displayName is string
+                    && isValidTimestamp(request.resource.data.updatedAt);
+      allow delete: if false;
+
+      // User Bookmarks
+      match /bookmarks/{dramaId} {
+        allow read, write: if isUser(userId);
+      }
+
+      // User Subscriptions (Followed Dramas)
+      match /subscriptions/{dramaId} {
+        allow read, write: if isUser(userId);
+      }
+
+      // User Watch History
+      match /history/{dramaId} {
+        allow read, write: if isUser(userId);
+      }
+    }
+
+    // Public Comments on Drama Episodes
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.dramaId is string
+                    && request.resource.data.text is string
+                    && request.resource.data.text.size() > 0
+                    && request.resource.data.text.size() <= 500
+                    && isValidTimestamp(request.resource.data.createdAt);
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+  }
+}

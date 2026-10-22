@@ -26,6 +26,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.google.firebase.auth.FirebaseUser
 import com.example.ui.MainNavigationTab
 import com.example.ui.theme.*
 
@@ -38,6 +40,7 @@ fun WebsiteTopNavBar(
     selectedCountry: String = "Semua",
     isWebsiteMode: Boolean,
     currentUrl: String = "https://dramaku.id/beranda",
+    currentUser: FirebaseUser? = null,
     onTabSelect: (MainNavigationTab) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onGenreSelect: (String) -> Unit = {},
@@ -279,20 +282,57 @@ fun WebsiteTopNavBar(
                     )
                 }
 
-                // Profile Avatar Indicator
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(CrimsonDark),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "VIP",
-                        color = GoldYellow,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black
-                    )
+                // Profile Avatar Indicator / Sign-In Button
+                if (currentUser != null) {
+                    val photoUrl = currentUser.photoUrl?.toString()
+                    val initials = (currentUser.displayName ?: "DK")
+                        .split(" ")
+                        .mapNotNull { it.firstOrNull()?.toString() }
+                        .take(2)
+                        .joinToString("")
+                        .uppercase()
+
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .clickable { onTabSelect(MainNavigationTab.PROFILE) }
+                            .background(CrimsonDark),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (!photoUrl.isNullOrEmpty()) {
+                            AsyncImage(
+                                model = photoUrl,
+                                contentDescription = "Profil",
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Text(
+                                text = if (initials.isNotEmpty()) initials else "VIP",
+                                color = GoldYellow,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { onTabSelect(MainNavigationTab.PROFILE) },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CrimsonPrimary),
+                        modifier = Modifier
+                            .height(28.dp)
+                            .testTag("web_login_nav_button")
+                    ) {
+                        Text(
+                            text = "Masuk",
+                            color = CrimsonLight,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
